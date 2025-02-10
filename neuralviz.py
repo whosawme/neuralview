@@ -2,6 +2,7 @@ import numpy as np
 from typing import List, Tuple
 import math
 import pygame
+import pyperclip
 
 # Initialize Pygame
 pygame.init()
@@ -38,6 +39,7 @@ class Button:
             self.clicked = False
         return False
 
+
 class InputBox:
     def __init__(self, x: int, y: int, width: int, height: int, text: str = ''):
         self.rect = pygame.Rect(x, y, width, height)
@@ -67,6 +69,7 @@ class InputBox:
         pygame.draw.rect(screen, color, self.rect, 2)
         screen.blit(self.txt_surface, (self.rect.x + 5, self.rect.y + 5))
 
+
 class Neuron:
     def __init__(self, x: int, y: int):
         self.x = x
@@ -83,6 +86,7 @@ class Neuron:
         pygame.draw.circle(screen, color, (self.x, self.y), radius)
         pygame.draw.circle(screen, (200, 200, 200), (self.x, self.y), radius, 1)
 
+
 class Layer:
     def __init__(self, num_neurons: int, y_start: int, x_pos: int):
         self.neurons = []
@@ -96,6 +100,7 @@ class Layer:
     def draw(self, screen):
         for neuron in self.neurons:
             neuron.draw(screen)
+
 
 class NeuralNetwork:
     def __init__(self, layer_sizes: List[int], learning_rate: float = 0.1):
@@ -249,16 +254,71 @@ class NeuralNetwork:
         for layer in self.layers:
             layer.draw(screen)
 
+
+class ScrollablePane:
+    def __init__(self, rect, font):
+        self.rect = rect
+        self.font = font
+        self.scroll_y = 0
+        self.content = []
+        self.max_scroll = 0
+        
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 4:  # Mouse wheel up
+                self.scroll_y = max(0, self.scroll_y - 20)
+            elif event.button == 5:  # Mouse wheel down
+                self.scroll_y = min(self.max_scroll, self.scroll_y + 20)
+
+    def draw(self, screen, content):
+        # Draw background
+        pygame.draw.rect(screen, (40, 40, 40), self.rect)
+        # pygame.draw.rect(screen, (100, 100, 100), self.rect, 2)
+        
+        # Calculate content height and max scroll
+        total_height = len(content) * 20
+        self.max_scroll = max(0, total_height - self.rect.height)
+        
+        # Draw visible content
+        visible_start = self.scroll_y // 20
+        visible_end = min(len(content), (self.scroll_y + self.rect.height) // 20 + 1)
+        
+        for i, line in enumerate(content[visible_start:visible_end]):
+            y_pos = self.rect.y + i * 20 - (self.scroll_y % 20)
+            if self.rect.y <= y_pos <= self.rect.bottom:
+                text = self.font.render(line, True, (200, 200, 200))
+                screen.blit(text, (self.rect.x + 10, y_pos))
+
+
+class CopyButton:
+    def __init__(self, x, y, width, height):
+        self.rect = pygame.Rect(x, y, width, height)
+        self.font = pygame.font.SysFont('Arial', 12)
+        
+    def draw(self, screen):
+        pygame.draw.rect(screen, (60, 60, 60), self.rect)
+        text = self.font.render("Copy", True, (200, 200, 200))
+        text_rect = text.get_rect(center=self.rect.center)
+        screen.blit(text, text_rect)
+        
+    def handle_event(self, event, text_to_copy):
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if self.rect.collidepoint(event.pos):
+                import pyperclip
+                pyperclip.copy(text_to_copy)
+                return True
+        return False
+
+
 class Visualizer:
     def __init__(self):
         self.width = 1200
         self.height = 800
-        self.code_preview_rect = pygame.Rect(800, 10, 380, 780)
         self.screen = pygame.display.set_mode((self.width, self.height))
         pygame.display.set_caption("Neural Network Visualizer")
 
         self.code_font = pygame.font.SysFont('Courier', 14)
-        self.code_preview_rect = pygame.Rect(800, 10, 380, 780)
+        self.code_lines = [] 
         self.update_code_preview()
         
         # Network configuration
@@ -280,9 +340,17 @@ class Visualizer:
         
         # Training controls
         self.step_btn = Button(250, 90, 60, 30, "Step")
+
+
+        self.code_pane = ScrollablePane(pygame.Rect(800, 10, 380, 380), self.code_font)
+        self.tensor_pane = ScrollablePane(pygame.Rect(800, 400, 380, 380), self.code_font)
+        self.copy_button = CopyButton(1150, 15, 50, 20)
+        self.show_tensors = False  # Toggle for tensor view
         
         self.font = pygame.font.SysFont('Arial', 16)
         self.clock = pygame.time.Clock()
+
+
 
     def update_code_preview(self):
         if hasattr(self, 'network'):
@@ -292,6 +360,18 @@ class Visualizer:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+
+            # Handle pane scrolling
+            self.code_pane.handle_event(event)
+            self.tensor_pane.handle_event(event)
+            
+            # Handle copy button
+            if self.copy_button.handle_event(event, "\n".join(self.code_lines)):
+                print("Code copied to clipboard!")
+            
+            # Toggle tensor view with 'T' key
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_t:
+                self.show_tensors = not self.show_tensors
             
             # Handle input boxes
             input_result = self.input_box.handle_event(event)
@@ -299,12 +379,12 @@ class Visualizer:
             
             # Handle network structure buttons
             if self.add_layer_btn.handle_event(event):
-                self.layer_sizes.insert(self.selected_layer + 1, 4)  # Add new layer with 4 neurons
+                self.layer_sizes.insert(self.selected_layer + 1, 4)
                 self.network = NeuralNetwork(self.layer_sizes)
                 self.update_code_preview()
                 
             if self.remove_layer_btn.handle_event(event):
-                if len(self.layer_sizes) > 2:  # Keep at least input and output layers
+                if len(self.layer_sizes) > 2:
                     self.layer_sizes.pop(self.selected_layer)
                     self.selected_layer = min(self.selected_layer, len(self.layer_sizes) - 1)
                     self.network = NeuralNetwork(self.layer_sizes)
@@ -322,39 +402,37 @@ class Visualizer:
                 self.update_code_preview()
                 
             if self.remove_neuron_btn.handle_event(event):
-                if self.layer_sizes[self.selected_layer] > 1:  # Keep at least one neuron per layer
+                if self.layer_sizes[self.selected_layer] > 1:
                     self.layer_sizes[self.selected_layer] -= 1
                     self.network = NeuralNetwork(self.layer_sizes)
                     self.update_code_preview()
             
             # Handle keyboard controls
-        
-            if event.type == pygame.KEYDOWN:
-                if not (self.input_box.active or self.target_box.active):  # Only if not typing in input boxes
-                    if event.key == pygame.K_LEFT:
-                        self.selected_layer = max(0, self.selected_layer - 1)
-                    elif event.key == pygame.K_RIGHT:
-                        self.selected_layer = min(len(self.layer_sizes) - 1, self.selected_layer + 1)
-                    elif event.key == pygame.K_UP:
-                        self.layer_sizes[self.selected_layer] += 1
+            if event.type == pygame.KEYDOWN and not (self.input_box.active or self.target_box.active):
+                if event.key == pygame.K_LEFT:
+                    self.selected_layer = max(0, self.selected_layer - 1)
+                elif event.key == pygame.K_RIGHT:
+                    self.selected_layer = min(len(self.layer_sizes) - 1, self.selected_layer + 1)
+                elif event.key == pygame.K_UP:
+                    self.layer_sizes[self.selected_layer] += 1
+                    self.network = NeuralNetwork(self.layer_sizes)
+                    self.update_code_preview()
+                elif event.key == pygame.K_DOWN:
+                    if self.layer_sizes[self.selected_layer] > 1:
+                        self.layer_sizes[self.selected_layer] -= 1
                         self.network = NeuralNetwork(self.layer_sizes)
                         self.update_code_preview()
-                    elif event.key == pygame.K_DOWN:
-                        if self.layer_sizes[self.selected_layer] > 1:
-                            self.layer_sizes[self.selected_layer] -= 1
-                            self.network = NeuralNetwork(self.layer_sizes)
-                            self.update_code_preview()
-                    elif event.key == pygame.K_RETURN:
-                        try:
-                            inputs = np.array([float(x) for x in self.input_box.text.split(',')])
-                            targets = np.array([float(x) for x in self.target_box.text.split(',')])
-                            if len(inputs) != self.layer_sizes[0] or len(targets) != self.layer_sizes[-1]:
-                                print(f"Error: Input size must be {self.layer_sizes[0]} and target size must be {self.layer_sizes[-1]}")
-                                return
-                            self.network.forward(inputs)
-                            self.network.backward(targets)
-                        except (ValueError, IndexError) as e:
-                            print(f"Error processing input: {e}")
+                elif event.key == pygame.K_RETURN:
+                    try:
+                        inputs = np.array([float(x) for x in self.input_box.text.split(',')])
+                        targets = np.array([float(x) for x in self.target_box.text.split(',')])
+                        if len(inputs) != self.layer_sizes[0] or len(targets) != self.layer_sizes[-1]:
+                            print(f"Error: Input size must be {self.layer_sizes[0]} and target size must be {self.layer_sizes[-1]}")
+                            return
+                        self.network.forward(inputs)
+                        self.network.backward(targets)
+                    except (ValueError, IndexError) as e:
+                        print(f"Error processing input: {e}")
             
             # Handle training button
             if self.step_btn.handle_event(event):
@@ -399,6 +477,13 @@ class Visualizer:
         self.screen.blit(input_label, (10, -5))
         self.screen.blit(target_label, (10, 35))
         self.screen.blit(layer_info, (10, 75))
+
+        # Draw code pane with scroll
+        title = self.font.render("PyTorch Equivalent:", True, (255, 255, 255))
+        self.screen.blit(title, (810, 15))
+        self.code_pane.draw(self.screen, self.code_lines)
+        self.copy_button.draw(self.screen)
+
         
         # Highlight selected layer
         if 0 <= self.selected_layer < len(self.network.layers):
@@ -406,19 +491,41 @@ class Visualizer:
             for neuron in layer.neurons:
                 pygame.draw.circle(self.screen, (255, 255, 0), (neuron.x, neuron.y), 18, 2)
         
-
-        # pygame.draw.rect(self.screen, (40, 40, 40), self.code_preview_rect)
-        pygame.draw.rect(self.screen, (100, 100, 100), self.code_preview_rect, 2)
-
-        # Draw code lines
-        if hasattr(self, 'code_lines'):
-            line_height = 20
-            for i, line in enumerate(self.code_lines):
-                text = self.code_font.render(line, True, (200, 200, 200))
-                self.screen.blit(text, (self.code_preview_rect.x + 10, 
-                                    self.code_preview_rect.y + 40 + i * line_height))
+                
+        # Draw tensor visualization if enabled
+        if self.show_tensors:
+            tensor_title = self.font.render("Tensor Operations:", True, (255, 255, 255))
+            self.screen.blit(tensor_title, (810, 405))
+            tensor_content = self.get_tensor_visualization()
+            self.tensor_pane.draw(self.screen, tensor_content)
 
         pygame.display.flip()
+
+    def get_tensor_visualization(self):
+        lines = []
+        for i, layer in enumerate(self.network.layers[:-1]):
+            next_layer = self.network.layers[i + 1]
+            lines.append(f"Layer {i+1} -> {i+2}:")
+            lines.append(f"Input shape: ({len(layer.neurons)}, 1)")
+            lines.append(f"Weight shape: ({len(layer.neurons)}, {len(next_layer.neurons)})")
+            lines.append(f"Output shape: ({len(next_layer.neurons)}, 1)")
+            
+            # Show actual values
+            lines.append("\nInput values:")
+            input_vals = [f"{n.value:.3f}" for n in layer.neurons]
+            lines.append(f"[{', '.join(input_vals)}]")
+            
+            lines.append("\nWeight matrix:")
+            for n in layer.neurons:
+                weight_str = [f"{w:.3f}" for w in n.weights]
+                lines.append(f"[{', '.join(weight_str)}]")
+                
+            lines.append("\nActivations:")
+            activations = [f"{n.value:.3f}" for n in next_layer.neurons]
+            lines.append(f"[{', '.join(activations)}]")
+            lines.append("-" * 40 + "\n")
+        return lines
+        
 
 
     def run(self):
@@ -427,6 +534,7 @@ class Visualizer:
             running = self.handle_events()
             self.draw()
             self.clock.tick(60)
+
 
 if __name__ == "__main__":
     visualizer = Visualizer()
