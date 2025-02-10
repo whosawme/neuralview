@@ -1,7 +1,7 @@
-import pygame
 import numpy as np
 from typing import List, Tuple
 import math
+import pygame
 
 # Initialize Pygame
 pygame.init()
@@ -112,56 +112,120 @@ class NeuralNetwork:
             x_pos = margin + i * layer_spacing
             self.layers.append(Layer(size, 300, x_pos))
         
-        # Initialize weights
+        # Initialize weights and biases properly (He initialization)
         for i in range(len(self.layers) - 1):
             current_layer = self.layers[i]
             next_layer = self.layers[i + 1]
             for neuron in current_layer.neurons:
-                neuron.weights = np.random.randn(len(next_layer.neurons)) * 0.1
+                # He initialization
+                std = np.sqrt(2.0 / len(current_layer.neurons))
+                neuron.weights = np.random.randn(len(next_layer.neurons)) * std
+                neuron.bias = 0.0
+
+    def relu(self, x):
+        return np.maximum(0, x)
+
+    def relu_derivative(self, x):
+        return np.where(x > 0, 1, 0)
 
     def forward(self, inputs: np.ndarray):
         # Set input values
         for neuron, input_val in zip(self.layers[0].neurons, inputs):
             neuron.value = input_val
+
         
-        # Forward propagation
+        
+        # Forward propagation with ReLU activation
         for i in range(len(self.layers) - 1):
             current_layer = self.layers[i]
             next_layer = self.layers[i + 1]
             
             for j, next_neuron in enumerate(next_layer.neurons):
-                next_neuron.value = next_neuron.bias
+                next_neuron.value = 0
                 for current_neuron in current_layer.neurons:
                     next_neuron.value += current_neuron.value * current_neuron.weights[j]
-                next_neuron.value = 1 / (1 + np.exp(-next_neuron.value))  # sigmoid
+                next_neuron.value = self.relu(next_neuron.value)
 
     def backward(self, targets: np.ndarray):
-        # Output layer error
-        output_layer = self.layers[-1]
-        for i, neuron in enumerate(output_layer.neurons):
-            error = targets[i] - neuron.value
-            neuron.delta = error * neuron.value * (1 - neuron.value)
+        # For storing gradients
+        weight_gradients = []
+        bias_gradients = []
         
-        # Hidden layers error
+        # Calculate output layer error (MSE loss derivative * ReLU derivative)
+        output_layer = self.layers[-1]
+        output_deltas = []
+        
+        for i, neuron in enumerate(output_layer.neurons):
+            error = 2 * (neuron.value - targets[i])  # MSE derivative
+            delta = error * self.relu_derivative(neuron.value)
+            neuron.delta = delta
+            output_deltas.append(delta)
+        
+        # Backpropagate error
         for i in range(len(self.layers) - 2, -1, -1):
-            layer = self.layers[i]
+            current_layer = self.layers[i]
             next_layer = self.layers[i + 1]
             
-            for j, neuron in enumerate(layer.neurons):
+            # Calculate deltas for current layer
+            for j, current_neuron in enumerate(current_layer.neurons):
                 error = 0.0
                 for k, next_neuron in enumerate(next_layer.neurons):
-                    error += next_neuron.delta * neuron.weights[k]
-                neuron.delta = error * neuron.value * (1 - neuron.value)
+                    error += next_neuron.delta * current_neuron.weights[k]
+                current_neuron.delta = error * self.relu_derivative(current_neuron.value)
         
-        # Update weights
+        # Update weights and biases
         for i in range(len(self.layers) - 1):
-            layer = self.layers[i]
+            current_layer = self.layers[i]
             next_layer = self.layers[i + 1]
             
-            for neuron in layer.neurons:
+            for current_neuron in current_layer.neurons:
                 for j, next_neuron in enumerate(next_layer.neurons):
-                    neuron.weights[j] += self.learning_rate * next_neuron.delta * neuron.value
-                    next_neuron.bias += self.learning_rate * next_neuron.delta
+                    # Gradient descent update
+                    weight_grad = current_neuron.value * next_neuron.delta
+                    current_neuron.weights[j] -= self.learning_rate * weight_grad
+
+    def get_pytorch_code(self) -> str:
+        """Generate equivalent PyTorch code for the current network architecture."""
+        layer_sizes = [len(layer.neurons) for layer in self.layers]
+        code = [
+            "import torch",
+            "import torch.nn as nn",
+            "",
+            "class NeuralNetwork(nn.Module):",
+            "    def __init__(self):",
+            "        super().__init__()",
+            ""
+        ]
+        
+        # Add layers
+        for i in range(len(layer_sizes) - 1):
+            code.append(f"        self.layer{i+1} = nn.Linear({layer_sizes[i]}, {layer_sizes[i+1]})")
+            if i < len(layer_sizes) - 2:  # Don't add ReLU after last layer
+                code.append(f"        self.relu{i+1} = nn.ReLU()")
+        
+        code.extend([
+            "",
+            "    def forward(self, x):"
+        ])
+        
+        # Add forward pass
+        code.append("        x = self.layer1(x)")
+        for i in range(1, len(layer_sizes) - 1):
+            code.append(f"        x = self.relu{i}(x)")
+            code.append(f"        x = self.layer{i+1}(x)")
+        
+        code.extend([
+            "        return x",
+            "",
+            "# Create model instance",
+            "model = NeuralNetwork()",
+            "",
+            "# Example training loop",
+            "criterion = nn.MSELoss()",
+            "optimizer = torch.optim.SGD(model.parameters(), lr=0.1)",
+        ])
+        
+        return "\n".join(code)
 
     def draw(self, screen):
         # Draw connections
@@ -187,10 +251,15 @@ class NeuralNetwork:
 
 class Visualizer:
     def __init__(self):
-        self.width = 800
-        self.height = 600
+        self.width = 1200
+        self.height = 800
+        self.code_preview_rect = pygame.Rect(800, 10, 380, 780)
         self.screen = pygame.display.set_mode((self.width, self.height))
         pygame.display.set_caption("Neural Network Visualizer")
+
+        self.code_font = pygame.font.SysFont('Courier', 14)
+        self.code_preview_rect = pygame.Rect(800, 10, 380, 780)
+        self.update_code_preview()
         
         # Network configuration
         self.layer_sizes = [2, 4, 3, 2]  # Default architecture
@@ -215,6 +284,10 @@ class Visualizer:
         self.font = pygame.font.SysFont('Arial', 16)
         self.clock = pygame.time.Clock()
 
+    def update_code_preview(self):
+        if hasattr(self, 'network'):
+            self.code_lines = self.network.get_pytorch_code().split('\n')
+
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -228,13 +301,15 @@ class Visualizer:
             if self.add_layer_btn.handle_event(event):
                 self.layer_sizes.insert(self.selected_layer + 1, 4)  # Add new layer with 4 neurons
                 self.network = NeuralNetwork(self.layer_sizes)
+                self.update_code_preview()
                 
             if self.remove_layer_btn.handle_event(event):
                 if len(self.layer_sizes) > 2:  # Keep at least input and output layers
                     self.layer_sizes.pop(self.selected_layer)
                     self.selected_layer = min(self.selected_layer, len(self.layer_sizes) - 1)
                     self.network = NeuralNetwork(self.layer_sizes)
-            
+                    self.update_code_preview()
+
             if self.prev_layer_btn.handle_event(event):
                 self.selected_layer = max(0, self.selected_layer - 1)
                 
@@ -244,13 +319,16 @@ class Visualizer:
             if self.add_neuron_btn.handle_event(event):
                 self.layer_sizes[self.selected_layer] += 1
                 self.network = NeuralNetwork(self.layer_sizes)
+                self.update_code_preview()
                 
             if self.remove_neuron_btn.handle_event(event):
                 if self.layer_sizes[self.selected_layer] > 1:  # Keep at least one neuron per layer
                     self.layer_sizes[self.selected_layer] -= 1
                     self.network = NeuralNetwork(self.layer_sizes)
+                    self.update_code_preview()
             
             # Handle keyboard controls
+        
             if event.type == pygame.KEYDOWN:
                 if not (self.input_box.active or self.target_box.active):  # Only if not typing in input boxes
                     if event.key == pygame.K_LEFT:
@@ -260,14 +338,19 @@ class Visualizer:
                     elif event.key == pygame.K_UP:
                         self.layer_sizes[self.selected_layer] += 1
                         self.network = NeuralNetwork(self.layer_sizes)
+                        self.update_code_preview()
                     elif event.key == pygame.K_DOWN:
                         if self.layer_sizes[self.selected_layer] > 1:
                             self.layer_sizes[self.selected_layer] -= 1
                             self.network = NeuralNetwork(self.layer_sizes)
+                            self.update_code_preview()
                     elif event.key == pygame.K_RETURN:
                         try:
                             inputs = np.array([float(x) for x in self.input_box.text.split(',')])
                             targets = np.array([float(x) for x in self.target_box.text.split(',')])
+                            if len(inputs) != self.layer_sizes[0] or len(targets) != self.layer_sizes[-1]:
+                                print(f"Error: Input size must be {self.layer_sizes[0]} and target size must be {self.layer_sizes[-1]}")
+                                return
                             self.network.forward(inputs)
                             self.network.backward(targets)
                         except (ValueError, IndexError) as e:
@@ -278,6 +361,9 @@ class Visualizer:
                 try:
                     inputs = np.array([float(x) for x in self.input_box.text.split(',')])
                     targets = np.array([float(x) for x in self.target_box.text.split(',')])
+                    if len(inputs) != self.layer_sizes[0] or len(targets) != self.layer_sizes[-1]:
+                        print(f"Error: Input size must be {self.layer_sizes[0]} and target size must be {self.layer_sizes[-1]}")
+                        return
                     self.network.forward(inputs)
                     self.network.backward(targets)
                 except (ValueError, IndexError) as e:
@@ -286,6 +372,7 @@ class Visualizer:
         return True
 
     def draw(self):
+
         self.screen.fill((30, 30, 30))
         
         # Draw network
@@ -319,7 +406,20 @@ class Visualizer:
             for neuron in layer.neurons:
                 pygame.draw.circle(self.screen, (255, 255, 0), (neuron.x, neuron.y), 18, 2)
         
+
+        # pygame.draw.rect(self.screen, (40, 40, 40), self.code_preview_rect)
+        pygame.draw.rect(self.screen, (100, 100, 100), self.code_preview_rect, 2)
+
+        # Draw code lines
+        if hasattr(self, 'code_lines'):
+            line_height = 20
+            for i, line in enumerate(self.code_lines):
+                text = self.code_font.render(line, True, (200, 200, 200))
+                self.screen.blit(text, (self.code_preview_rect.x + 10, 
+                                    self.code_preview_rect.y + 40 + i * line_height))
+
         pygame.display.flip()
+
 
     def run(self):
         running = True
