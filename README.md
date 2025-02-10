@@ -1,6 +1,7 @@
 # Neural Network Visualizer
 
 Interactive tool for visualizing and manipulating neural networks in real-time.
+![UI](NeuralView.png)
 
 ## Current Features
 - Dynamic network architecture modification (add/remove layers and neurons)
